@@ -32,7 +32,7 @@ services:
         container_name: oe-certs 
         image: itechuw/certgen:main
         platform: linux/amd64  
-        restart: always
+        restart: "no"
         environment:
             - KEYSTORE_PW="kspass"
             - TRUSTSTORE_PW="tspass"
@@ -43,17 +43,19 @@ services:
 
     db.openelis.org:
         container_name: openelisglobal-database 
-        image: postgres:14.4
+        image: itechuw/openelis-global-2-database:develop
+        platform: linux/amd64
         ports:
             - "15432:5432"
         restart: always
         env_file:
-            - ./volumes/openelis/database/database.env
+            - ./configs/openelis/database/database.env
+        environment:
+            - DB_PASSWORD=${OE_DB_PASSWORD}
+            - DB_SUPERUSER_PASSWORD=${ADMIN_PASSWORD}       
         volumes:
               # preserves the database between containers
             - oe-db-data:/var/lib/postgresql/data                
-              # files here will run on install
-            - ./volumes/openelis/database/dbInit:/docker-entrypoint-initdb.d
         logging: *local-logging    
         healthcheck:
             test: [ "CMD", "pg_isready", "-q", "-d", "clinlims", "-U", "clinlims" ]
@@ -63,7 +65,7 @@ services:
             
     oe.openelis.org:
         container_name: openelisglobal-webapp 
-        image: itechuw/openelis-global-2:3.2.0.2
+        image: itechuw/openelis-global-2:develop
         platform: linux/amd64  
         depends_on:
             - db.openelis.org
@@ -76,25 +78,32 @@ services:
         logging: *local-logging      
         environment:
             - DEFAULT_PW=adminADMIN! 
-            - TZ=Africa/Nairobi
-              # context.xml doesn't seem to be able to pick up environment variables directly, so we are passing them in as CATALINA_OPTS
-            - CATALINA_OPTS= -Ddatasource.url=jdbc:postgresql://db.openelis.org:5432/clinlims -Ddatasource.username=clinlims
+            - TZ=America/New_York
+              # Config variables loaded through Tomacat server.xml
+            - CATALINA_OPTS= -Ddatasource.url=jdbc:postgresql://db.openelis.org:5432/clinlims -Ddatasource.username=clinlims -Ddatasource.password=${OE_DB_PASSWORD} -Doe.ssl.truststorepath=${SSL_TRUSTSTORE_PATH} -Doe.ssl.truststorepassword=${SSL_TRUSTSTORE_PASSWORD} -Doe.ssl.keystorepath=${SSL_KEYSTORE_PATH} -Doe.ssl.keystorepassword=${SSL_KEYSTORE_PASSWORD}
+             # Env variables passed to the common properties file
+            - SSL_KEYSTORE_PATH
+            - SSL_KEYSTORE_PASSWORD
+            - SSL_TRUSTSTORE_PATH
+            - SSL_TRUSTSTORE_PASSWORD
         volumes:
             -  key_trust-store-volume:/etc/openelis-global
-            - ./volumes/openelis/plugins/:/var/lib/openelis-global/plugins
-            - ./volumes/openelis/tomcat/oe_server.xml:/usr/local/tomcat/conf/server.xml
-            - ./volumes/openelis/logs/oeLogs:/var/lib/openelis-global/logs
-            - ./volumes/openelis/logs/tomcatLogs/:/usr/local/tomcat/logs
-            - ./volumes/openelis/properties/SystemConfiguration.properties:/var/lib/openelis-global/properties/SystemConfiguration.properties
-            - ./volumes/openelis/ocl/:/var/lib/openelis-global/ocl
+            - ./configs/openelis/plugins/:/var/lib/openelis-global/plugins
+            - ./configs/openelis/logs/oeLogs:/var/lib/openelis-global/logs
+            - ./configs/openelis/logs/tomcatLogs/:/usr/local/tomcat/logs
+            - ./configs/openelis/properties/SystemConfiguration.properties:/var/lib/openelis-global/properties/SystemConfiguration.properties
+            - ./configs/openelis/analyzer/analyzer-test-map.csv:/var/lib/openelis-global/analyzer/analyzer-test-map.csv
+            - ./configs/openelis/odoo/odoo-test-product-mapping.csv:/var/lib/openelis-global/odoo/odoo-test-product-mapping.csv
+            - ./configs/openelis/programs/:/var/lib/openelis-global/programs
+            - ./configs/openelis/configuration:/var/lib/openelis-global/configuration
+            - ./configs/openelis/menu/menu_config.json:/var/lib/openelis-global/menu/menu_config.json
             
         secrets:
-            - source: datasource.password
             - source: common.properties
             
     fhir.openelis.org:
         container_name: external-fhir-api
-        image: itechuw/openelis-global-2-fhir:3.2.0.2
+        image: itechuw/openelis-global-2-fhir:develop
         platform: linux/amd64
         ports:
             - "8081:8080"
@@ -104,26 +113,28 @@ services:
             - certs    
         restart: always
         environment:
-          SPRING_CONFIG_LOCATION: file:///run/secrets/hapi_application.yaml
-          TZ: Africa/Nairobi
-          
-          JAVA_OPTS: "-Djavax.net.ssl.trustStore=/etc/openelis-global/truststore 
-                      -Djavax.net.ssl.trustStorePassword=tspass
-                      -Djavax.net.ssl.trustStoreType=pkcs12 
-                      -Djavax.net.ssl.keyStore=/etc/openelis-global/keystore 
-                      -Djavax.net.ssl.keyStorePassword=kspass 
-                      -Djavax.net.ssl.keyStoreType=pkcs12"   
+          TZ: America/New_York
+
+          JAVA_OPTS: "-Djavax.net.ssl.trustStore=${SSL_TRUSTSTORE_PATH}
+                      -Djavax.net.ssl.trustStorePassword=${SSL_TRUSTSTORE_PASSWORD}
+                      -Djavax.net.ssl.trustStoreType=pkcs12
+                      -Djavax.net.ssl.keyStore=${SSL_KEYSTORE_PATH}
+                      -Djavax.net.ssl.keyStorePassword=${SSL_KEYSTORE_PASSWORD}
+                      -Djavax.net.ssl.keyStoreType=pkcs12"
+          # Config variables loaded through Tomacat server.xml            
+          CATALINA_OPTS: "-Dhapi.ssl.truststorepath=${SSL_TRUSTSTORE_PATH} -Dhapi.ssl.truststorepassword=${SSL_TRUSTSTORE_PASSWORD} -Dhapi.ssl.keystorepath=${SSL_KEYSTORE_PATH} -Dhapi.ssl.keystorepassword=${SSL_KEYSTORE_PASSWORD}"  
+          # Config variables loaded through Hapi application.yml
+          FHIR_DATASOURCE_URL : "jdbc:postgresql://db.openelis.org:5432/clinlims?currentSchema=clinlims"
+          FHIR_DATASOURCE_USERNAME: "clinlims"
+          FHIR_DATASOURCE_PASSWORD: ${OE_DB_PASSWORD}
+          FHIR_SERVER_ADRESS: "http://fhir.openelis.org:8080/fhir/"  
 
         logging: *local-logging                       
         volumes:
-            -  key_trust-store-volume:/etc/openelis-global
-            - ./volumes/openelis/tomcat/hapi_server.xml:/opt/bitnami/tomcat/conf/server.xml
-        secrets:
-            - source: hapi_application.yaml    
-
-         
+            -  key_trust-store-volume:/etc/openelis-global  
+        
     frontend.openelis.org:
-        image: itechuw/openelis-global-2-frontend:3.2.0.2
+        image: itechuw/openelis-global-2-frontend:develop
         container_name: openelisglobal-front-end
         platform: linux/amd64
         environment:
@@ -134,7 +145,7 @@ services:
             - oe.openelis.org
 
     proxy:
-        image: itechuw/openelis-global-2-proxy:3.2.0.2
+        image: itechuw/openelis-global-2-proxy:develop
         platform: linux/amd64
         container_name: openelisglobal-proxy
         ports:
@@ -143,7 +154,7 @@ services:
         volumes:
             - certs-vol:/etc/nginx/certs/
             - keys-vol:/etc/nginx/keys/
-            - ./volumes/openelis/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+            - ./configs/openelis/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
             # - /KEYSTORE_PASSWORD:/etc/nginx/private/key_pass
             # - /etc/openelis-global/nginx.cert.pem:/etc/nginx/certs/cert.crt
             # - /etc/openelis-global/nginx.key.pem:/etc/nginx/certs/cert.key
@@ -213,11 +224,11 @@ services:
             test: ["CMD", "curl", "-f", "http://localhost:8080/openmrs"]
             timeout: 5s
         volumes:
-            - ./volumes/openmrs/distro/configuration/globalproperties/openelis-openmrs.xml:/openmrs/distribution/openmrs_config/globalproperties/openelis-openmrs.xml
-            - ./volumes/openmrs/modules/labonfhir-1.5.3.omod:/openmrs/distribution/openmrs_modules/labonfhir-1.5.3.omod
-            - ./volumes/openmrs/modules/referencedemodata-2.6.0.omod:/openmrs/distribution/openmrs_modules/referencedemodata-2.6.0.omod
-            # - ./volumes/openmrs/ssl/keystore:/etc/openelis-global/keystore
-            # - ./volumes/openmrs/ssl/truststore:/etc/openelis-global/truststore
+            - ./configs/openmrs/distro/configuration/globalproperties/openelis-openmrs.xml:/openmrs/distribution/openmrs_config/globalproperties/openelis-openmrs.xml
+            - ./configs/openmrs/modules/labonfhir-1.5.3.omod:/openmrs/distribution/openmrs_modules/labonfhir-1.5.3.omod
+            - ./configs/openmrs/modules/referencedemodata-2.6.0.omod:/openmrs/distribution/openmrs_modules/referencedemodata-2.6.0.omod
+            # - ./configs/openmrs/ssl/keystore:/etc/openelis-global/keystore
+            # - ./configs/openmrs/ssl/truststore:/etc/openelis-global/truststore
             - openmrs-data:/openmrs/data
         ports:
             - "8282:8080"            
@@ -264,7 +275,7 @@ services:
             timeout: 20s
             retries: 2
         volumes:
-            - ./volumes/openhim/configs/healthcheck.js:/healthcheck.js
+            - ./configs/openhim/configs/healthcheck.js:/healthcheck.js
         ports:
             - "8085:8080"
             - "5000:5000"
@@ -282,7 +293,7 @@ services:
         ports:
             - "9000:80"
         volumes:
-            - ./volumes/openhim/configs/default.json:/usr/share/nginx/html/config/default.json
+            - ./configs/openhim/configs/default.json:/usr/share/nginx/html/config/default.json
         depends_on:
             - openhim-core   
             - openhim-config 
@@ -298,7 +309,7 @@ services:
         image: ghcr.io/digi-uw/openhim-config:v0.0.0
         platform: linux/amd64
         volumes:
-            - ./volumes/openhim/configs/openhim-config.json:/app/test-openhim-config.json
+            - ./configs/openhim/configs/openhim-config.json:/app/test-openhim-config.json
 
     # # Hapi-FHIR -  SHR
     shr-hapi-fhir:
@@ -340,8 +351,8 @@ services:
     #     image: us-docker.pkg.dev/cloud-build-fhir/fhir-analytics/main:latest
     #     container_name: pipeline-controller
     #     volumes:
-    #         - ./volumes/fhirpipes/config:/app/config:ro
-    #         - ./volumes/fhirpipes/dwh:/dwh
+    #         - ./configs/fhirpipes/config:/app/config:ro
+    #         - ./configs/fhirpipes/dwh:/dwh
     #     environment:
     #         - JAVA_OPTS=-Xms7g -Xmx7g
     #     ports:
@@ -349,12 +360,8 @@ services:
      
                 
 secrets:
-  datasource.password:
-    file: ./volumes/openelis/properties/datasource.password  
   common.properties:
-    file:  ./volumes/openelis/properties/common.properties  
-  hapi_application.yaml:
-    file: ./volumes/openelis/properties/hapi_application.yaml  
+    file:  ./configs/openelis/properties/common.properties  
 
         
 volumes:
