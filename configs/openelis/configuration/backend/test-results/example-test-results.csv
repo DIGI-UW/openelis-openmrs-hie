@@ -1,4 +1,7 @@
 testName,resultType,resultValue,dictionaryCategory,sortOrder,isQuantifiable,isActive,isNormal,significantDigits,flags
+White Blood Cells Count (WBC),N,,,10,Y,Y,Y,1,
+Red Blood Cells Count (RBC),N,,,11,Y,Y,Y,2,
+Hemoglobin,N,,,12,Y,Y,Y,1,
 Platelets,N,,,13,Y,Y,Y,,
 HEPATITIS B TEST - QUALITATIVE,D,Positif,HL,43,N,Y,Y,,
 HEPATITIS B TEST - QUALITATIVE,D,Negatif,HL,43,N,Y,Y,,
