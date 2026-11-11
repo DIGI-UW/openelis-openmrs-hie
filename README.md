@@ -42,10 +42,7 @@ HTTP port moves to 8088 (`OE_HTTP_PORT` in `.env`) because the OpenMRS gateway u
    (`org.openelisglobal.remote.source.*` in `configs/openelis/properties/common.properties`), shows the
    order under **Order > Incoming Orders**, matches the tests on their LOINC codes and sets the remote
    `Task` to accepted.
-3. **Result.** Once results are validated, the OpenELIS FHIR server pushes the `DiagnosticReport`,
-   `Observation`s and the updated `Task` to `org.openelisglobal.fhir.subscriber`: OpenHIM channel
-   `OpenELIS results to SHR` (`/lab-results/fhir`), which accepts them only from the OpenELIS FHIR
-   server's address (172.20.1.122) and routes them to the SHR. OpenMRS reads them from the SHR.
+3. **Result.** Enter and validate the results in OpenELIS. OpenMRS shows them on the order.
 
 To test, register a new patient in OpenMRS (orders for the generated demo patients are skipped) and
 order one of these tests, defined with their LOINC codes in
