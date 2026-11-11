@@ -2,7 +2,7 @@ testName,testSection,sampleType,loinc,isActive,isOrderable,sortOrder,unitOfMeasu
 Hemoglobin,Hematology,Whole Blood,718-7,Y,Y,1,g/dl,Hemoglobin,Hémoglobine,,
 GOT/ASAT,Hematology,Serum,48136-6,Y,Y,7,UI/L,GOT/ASAT,Transaminases G0T (37°C),,
 GPT/ALAT,Hematology,Serum,1742-6,Y,Y,8,UI/L,GPT/ALAT,Transaminases GPT (37°C),,
-White Blood Cells Count (WBC),Hematology,Whole Blood,26464-8	,Y,Y,10,mille/mm3,White Blood Cells Count (WBC),Numération des globules blancs,,
+White Blood Cells Count (WBC),Hematology,Whole Blood,26464-8,Y,Y,10,mille/mm3,White Blood Cells Count (WBC),Numération des globules blancs,,
 Red Blood Cells Count (RBC),Hematology,Whole Blood,23859-2,Y,Y,11,million/mm3,Red Blood Cells Count (RBC),Numération des globules rouges,,
 Platelets,Hematology,Whole Blood,26515-7,Y,Y,13,mille/mm3,Platelets,Plaquette,,
 CD4 percent  (%),Immunology,Whole Blood,20606-0,Y,Y,14,,CD4 percent  (%),Dénombrement des lymphocytes  CD4 (%),,

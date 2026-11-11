@@ -1,6 +1,7 @@
 version: '3.6'
 
-##### OpenELIS3
+##### OpenELIS Global 3.3.0 (openelis-docker 3.3.0)
+
 x-logging:
   &local-logging
   driver: "local"
@@ -31,19 +32,27 @@ services:
     certs:
         container_name: oe-certs 
         image: itechuw/certgen:main
-        platform: linux/amd64  
+        platform: linux/amd64
         restart: "no"
+        # The image ships a keystore and truststore built with its own default
+        # passwords. ensure-stores.sh rebuilds them from the self-signed
+        # certificate whenever they do not open with the passwords in .env, so
+        # changing SSL_KEYSTORE_PASSWORD or SSL_TRUSTSTORE_PASSWORD there is enough.
         environment:
-            - KEYSTORE_PW="kspass"
-            - TRUSTSTORE_PW="tspass"
+            - KEYSTORE_PW=${SSL_KEYSTORE_PASSWORD}
+            - TRUSTSTORE_PW=${SSL_TRUSTSTORE_PASSWORD}
+        command: ["/bin/bash", "/opt/openelis/ensure-stores.sh"]
+        networks:
+            - openelis-network
         volumes:
             -  key_trust-store-volume:/etc/openelis-global
             -  keys-vol:/etc/ssl/private/
             -  certs-vol:/etc/ssl/certs/
+            - ./configs/openelis/certs/ensure-stores.sh:/opt/openelis/ensure-stores.sh:ro
 
     db.openelis.org:
         container_name: openelisglobal-database 
-        image: itechuw/openelis-global-2-database:3.2.2.0
+        image: itechuw/openelis-global-2-database:3.3.0
         platform: linux/amd64
         ports:
             - "15432:5432"
@@ -52,11 +61,14 @@ services:
             - ./configs/openelis/database/database.env
         environment:
             - DB_PASSWORD=${OE_DB_PASSWORD}
-            - DB_SUPERUSER_PASSWORD=${ADMIN_PASSWORD}       
+            - DB_SUPERUSER_PASSWORD=${ADMIN_PASSWORD}   
         volumes:
               # preserves the database between containers
-            - ./configs/openelis/database/data:/var/lib/postgresql/data                   
+            - ./configs/openelis/database/data:/var/lib/postgresql/data                
+
         logging: *local-logging    
+        networks:
+            - openelis-network
         healthcheck:
             test: [ "CMD", "pg_isready", "-q", "-d", "clinlims", "-U", "clinlims" ]
             timeout: 45s
@@ -65,16 +77,20 @@ services:
             
     oe.openelis.org:
         container_name: openelisglobal-webapp 
-        image: itechuw/openelis-global-2:3.2.2.0
+        image: itechuw/openelis-global-2:3.3.0 
         platform: linux/amd64  
         depends_on:
-            - db.openelis.org
-            - fhir.openelis.org
-            - certs
+            db.openelis.org:
+                condition: service_started
+            certs:
+                condition: service_completed_successfully
         ports:
-            - "8080:8080"
-            - "8443:8443"
+            - "${OE_WEBAPP_HTTP_PORT:-8080}:8080"
+            - "${OE_WEBAPP_HTTPS_PORT:-8443}:8443"
         restart: always
+        networks:
+          openelis-network:
+              ipv4_address: 172.20.1.121
         logging: *local-logging      
         environment:
             - DEFAULT_PW=adminADMIN! 
@@ -86,31 +102,45 @@ services:
             - SSL_KEYSTORE_PASSWORD
             - SSL_TRUSTSTORE_PATH
             - SSL_TRUSTSTORE_PASSWORD
+             # Key for secrets stored in the database; installs that predate
+             # OE_ENCRYPTION_PASSWORD keep using the keystore password
+            - OE_ENCRYPTION_PASSWORD=${OE_ENCRYPTION_PASSWORD:-${SSL_KEYSTORE_PASSWORD}}
+             # The analyser Bridge, and the code OpenELIS pairs with it on start
+            - ANALYZER_BRIDGE_URL=https://bridge.openelis.org:8443
+            - ANALYZER_BRIDGE_PAIRING_CODE=${ANALYZER_BRIDGE_PAIRING_CODE:-}
         volumes:
             -  key_trust-store-volume:/etc/openelis-global
-            - ./configs/openelis/plugins/:/var/lib/openelis-global/plugins
+            -  lucene_index-vol:/var/lib/lucene_index
             - ./configs/openelis/logs/oeLogs:/var/lib/openelis-global/logs
             - ./configs/openelis/logs/tomcatLogs/:/usr/local/tomcat/logs
-            - ./configs/openelis/properties/:/var/lib/openelis-global/properties/
+            - ./configs/openelis/properties:/var/lib/openelis-global/properties
             - ./configs/openelis/analyzer/analyzer-test-map.csv:/var/lib/openelis-global/analyzer/analyzer-test-map.csv
             - ./configs/openelis/odoo/odoo-test-product-mapping.csv:/var/lib/openelis-global/odoo/odoo-test-product-mapping.csv
             - ./configs/openelis/programs/:/var/lib/openelis-global/programs
             - ./configs/openelis/configuration:/var/lib/openelis-global/configuration
             - ./configs/openelis/menu/menu_config.json:/var/lib/openelis-global/menu/menu_config.json
-            
+            - ./configs/openelis/branding:/var/lib/openelis-global/branding
+            - ./configs/openelis/nce-attachments:/var/lib/openelis-global/nce-attachments  # NCE file attachments
         secrets:
             - source: common.properties
-            
+
     fhir.openelis.org:
         container_name: external-fhir-api
-        image: itechuw/openelis-global-2-fhir:3.2.2.0
+        image: itechuw/openelis-global-2-fhir:3.3.0
         platform: linux/amd64
         ports:
-            - "8081:8080"
-            - "8444:8443"
+            - "${OE_FHIR_HTTP_PORT:-8081}:8080"
+            - "${OE_FHIR_HTTPS_PORT:-8444}:8443"
         depends_on:
-            - db.openelis.org
-            - certs    
+            db.openelis.org:
+                condition: service_started
+            certs:
+                condition: service_completed_successfully
+        networks:
+            # Fixed: the OpenHIM channel "OpenELIS results to SHR" accepts the
+            # result pushes from this address only.
+            openelis-network:
+                ipv4_address: 172.20.1.122
         restart: always
         environment:
           TZ: America/New_York
@@ -127,57 +157,133 @@ services:
           FHIR_DATASOURCE_URL : "jdbc:postgresql://db.openelis.org:5432/clinlims?currentSchema=clinlims"
           FHIR_DATASOURCE_USERNAME: "clinlims"
           FHIR_DATASOURCE_PASSWORD: ${OE_DB_PASSWORD}
-          FHIR_SERVER_ADRESS: "http://fhir.openelis.org:8080/fhir/"  
+          FHIR_SERVER_ADRESS: "http://fhir.openelis.org:8080/fhir/"
 
         logging: *local-logging                       
         volumes:
-            -  key_trust-store-volume:/etc/openelis-global  
-        
+            -  key_trust-store-volume:/etc/openelis-global 
+       
     frontend.openelis.org:
-        image: itechuw/openelis-global-2-frontend:3.2.2.0
+        image: itechuw/openelis-global-2-frontend:3.3.0
         container_name: openelisglobal-front-end
         platform: linux/amd64
+        restart: always
+        networks:
+            - openelis-network
+        volumes:
+            # Translations this deployment supplies for itself, layered over the
+            # bundled ones per message id when OVERRIDE_DEFAULT_TRANSLATION is
+            # set in configs/properties/SystemConfiguration.properties. Served as
+            # /translation/<locale>.json; a locale with no file here keeps its
+            # shipped wording.
+            - ./configs/openelis/translation:/usr/share/nginx/html/translation:ro
         environment:
             - CHOKIDAR_USEPOLLING=true
         logging: *local-logging    
         tty: true
-        depends_on:
-            - oe.openelis.org
 
     proxy:
-        image: itechuw/openelis-global-2-proxy:3.2.2.0
-        platform: linux/amd64
+        image: itechuw/openelis-global-2-proxy:3.3.0
         container_name: openelisglobal-proxy
+        platform: linux/amd64
         ports:
-            # - 80:80
-            - 443:443
+            - "${OE_HTTP_PORT:-80}:80"
+            - "${OE_HTTPS_PORT:-443}:443"
+        environment:
+            - OE_NGINX_CERT=${OE_NGINX_CERT:-apache-selfsigned.crt}
+            - OE_NGINX_KEY=${OE_NGINX_KEY:-apache-selfsigned.key}
+            - OE_HTTPS_PORT=${OE_HTTPS_PORT:-443}
+        command:
+            - /bin/sh
+            - -c
+            - "envsubst '$$OE_NGINX_CERT $$OE_NGINX_KEY $$OE_HTTPS_PORT' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
         volumes:
-            - certs-vol:/etc/nginx/certs/
-            - keys-vol:/etc/nginx/keys/
-            - ./configs/openelis/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+            - ${OE_CERTS_PATH:-certs-vol}:/etc/nginx/certs/
+            - ${OE_KEYS_PATH:-keys-vol}:/etc/nginx/keys/
+            - ./configs/openelis/nginx/nginx.conf:/etc/nginx/nginx.conf.template:ro
             # - /KEYSTORE_PASSWORD:/etc/nginx/private/key_pass
             # - /etc/openelis-global/nginx.cert.pem:/etc/nginx/certs/cert.crt
             # - /etc/openelis-global/nginx.key.pem:/etc/nginx/certs/cert.key
         restart: unless-stopped
+        networks:
+            - openelis-network
         logging: *local-logging    
         depends_on:
             - certs
-            - frontend.openelis.org    
+            # nginx resolves the OpenMRS hosts (location /openmrs) when it starts
+            - backend
+            - frontend
+
+    # Analysers send their results to the Bridge, which hands them to
+    # OpenELIS; the Analysers pages manage them through it. OpenELIS pairs with
+    # it on start using ANALYZER_BRIDGE_PAIRING_CODE from .env.
+    # The Bridge runs as its own user (astm, uid 9257) and creates a folder per
+    # analyser under configs/analyzer-imports, so that folder must let other
+    # users write: run.sh and upgrade.sh set it to 1777; an online install runs
+    # `chmod 1777 configs/analyzer-imports` once (see README).
+    openelis-analyzer-bridge:
+        container_name: openelis-analyzer-bridge
+        image: itechuw/openelis-analyzer-bridge:3.4.1
+        platform: linux/amd64
+        depends_on:
+            certs:
+                condition: service_completed_successfully
+        restart: always
+        ports:
+            # ASTM LIS01-A over TCP, ASTM E1381, HL7 v2 over MLLP: the ports
+            # analysers on the lab network connect to.
+            - "12001:12001"
+            - "12011:12011"
+            - "2575:2575"
+        volumes:
+            - key_trust-store-volume:/etc/openelis-global:ro
+            # Result files from file-based analysers: one folder per analyser,
+            # named on its Analysers page.
+            - ./configs/openelis/analyzer-imports:/data/analyzer-imports
+            # Its own TLS identity, the pairing with OpenELIS, the analyser
+            # connections and the results OpenELIS has not accepted yet. It must
+            # survive container recreation and upgrades, or OpenELIS no longer
+            # recognises the Bridge and undelivered results are lost.
+            - bridge-state:/data/openelis-analyzer-bridge
+        environment:
+            - TZ=America/New_York
+            - BRIDGE_PAIRING_CODE=${ANALYZER_BRIDGE_PAIRING_CODE:-}
+            - BRIDGE_FILE_ENABLED=true
+            - BRIDGE_FILE_STATE_STORE_PATH=/data/openelis-analyzer-bridge/state.db
+            - BRIDGE_OUTBOX_DB_PATH=/data/openelis-analyzer-bridge/outbox.db
+            # Results go to {uri}/analyzer/fhir; the Bridge checks OpenELIS at {uri}/health.
+            # OpenELIS serves its API under /api/OpenELIS-Global.
+            - ORG_ITECH_AHB_FORWARD_HTTP_SERVER_URI=https://oe.openelis.org:8443/api/OpenELIS-Global
+            # OpenELIS's certificate is in the stack's trust store.
+            - BRIDGE_TRUSTSTORE_PATH=${SSL_TRUSTSTORE_PATH}
+            - BRIDGE_TRUSTSTORE_PASSWORD=${SSL_TRUSTSTORE_PASSWORD}
+            - BRIDGE_TRUSTSTORE_TYPE=PKCS12
+            - ORG_ITECH_AHB_MLLP_ENABLED=true
+            - ORG_ITECH_AHB_MLLP_PORT=2575
+        networks:
+            openelis-network:
+                aliases:
+                    - bridge.openelis.org
+        logging: *local-logging
 
     autoheal:
         container_name: autoheal-oe
         image: willfarrell/autoheal:1.2.0
         tty: true
         restart: always
+        networks:
+            - openelis-network
         environment:
             AUTOHEAL_CONTAINER_LABEL: all
-            TZ: Africa/Nairobi
+            TZ: America/New_York
         logging: *local-logging    
         volumes:
-            - /var/run/docker.sock:/var/run/docker.sock     
+            - /var/run/docker.sock:/var/run/docker.sock
 
 ##### OpenMRS3
     gateway:
+        networks:
+            - openelis-network
         image: openmrs/openmrs-reference-application-3-gateway:3.5.0
         container_name: openmrs-proxy
         restart: "unless-stopped"
@@ -188,6 +294,8 @@ services:
             - "80:80"
 
     frontend:
+        networks:
+            - openelis-network
         image: openmrs/openmrs-reference-application-3-frontend:3.5.0
         container_name: openmrs-frontend
         restart: "unless-stopped"
@@ -203,6 +311,8 @@ services:
             - backend
 
     backend:
+        networks:
+            - openelis-network
         image: openmrs/openmrs-reference-application-3-backend:3.5.0
         container_name: openmrs-backend
         restart: "unless-stopped"
@@ -233,6 +343,8 @@ services:
 
     # Maria DB
     db:
+        networks:
+            - openelis-network
         image: mariadb:10.11.7
         container_name: openmrs-db
         restart: "unless-stopped"
@@ -254,6 +366,8 @@ services:
 
     #OpenHIM -IOL
     mongo:
+        networks:
+            - openelis-network
         image: mongo:3.4
         container_name: openhim-mongo
         ports:
@@ -261,6 +375,8 @@ services:
        
 
     openhim-core:
+        networks:
+            - openelis-network
         container_name: openhim-core
         image: jembi/openhim-core:v7.1.0
         restart: unless-stopped
@@ -286,6 +402,8 @@ services:
             - mongo
 
     openhim-console:
+        networks:
+            - openelis-network
         container_name: openhim-console
         image: jembi/openhim-console:v1.15.0
         ports:
@@ -303,6 +421,8 @@ services:
 
     # Loads Default OpenHIM Config
     openhim-config:
+        networks:
+            - openelis-network
         container_name: openhim-config
         image: ghcr.io/digi-uw/openhim-config:v0.0.0
         platform: linux/amd64
@@ -311,6 +431,8 @@ services:
 
     # # Hapi-FHIR -  SHR
     shr-hapi-fhir:
+        networks:
+            - openelis-network
         container_name: shr-hapi-fhir
         image: hapiproject/hapi:v5.5.1
         depends_on:
@@ -332,6 +454,8 @@ services:
             - hapi-data:/data/hapi
 
     shr-db:
+        networks:
+            - openelis-network
         image: postgres:14.4
         container_name: hapi-fhir-db
         restart: always
@@ -354,20 +478,28 @@ services:
     #     environment:
     #         - JAVA_OPTS=-Xms7g -Xmx7g
     #     ports:
-    #         - '8095:8080'         
-     
-                
-secrets:
-  common.properties:
-    file:  ./configs/openelis/properties/common.properties  
+    #         - '8095:8080'
 
+secrets: 
+  common.properties:
+    file:  ./configs/openelis/properties/common.properties 
+
+networks:
+  openelis-network:
+    name: openelis-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24  
         
 volumes:
-  oe-db-data:
+  db-data:
   key_trust-store-volume:
   certs-vol:
   keys-vol:
-  openmrs-data: 
-  omrs-db-data: 
+  lucene_index-vol:
+  bridge-state:
+  openmrs-data:
+  omrs-db-data:
   hapi-data:
   hapi-fhir-db:
