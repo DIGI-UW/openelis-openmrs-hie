@@ -44,6 +44,10 @@ HTTP port moves to 8088 (`OE_HTTP_PORT` in `.env`) because the OpenMRS gateway u
    `Task` to accepted.
 3. **Result.** Enter and validate the results in OpenELIS. OpenMRS shows them on the order.
 
+On a fresh install, Lab on FHIR applies its settings from the second start of OpenMRS: run
+`docker compose restart backend` once OpenMRS is up, so patients reach OpenELIS with their ID as the
+national ID. Before that, enter the national ID when you receive the order.
+
 To test, register a new patient in OpenMRS (orders for the generated demo patients are skipped) and
 order one of these tests, defined with their LOINC codes in
 [configs/openelis/configuration/backend/tests/example-tests.csv](./configs/openelis/configuration/backend/tests/example-tests.csv):
